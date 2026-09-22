@@ -1,0 +1,9 @@
+[target.thumbv8m.main-none-eabihf]
+rustflags = [
+  "-C", "link-arg=--nmagic",
+  "-C", "link-arg=-Tlink.x",
+  "-C", "target-cpu=cortex-m33",
+]
+
+[build]
+target-dir = "target"
