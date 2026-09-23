@@ -1,85 +1,57 @@
-//! CPU and bus orchestration.
+//! The complete emulated computer: CPU, memory and devices.
 
-use mos6502::cpu::{CPU, WaitState};
-use mos6502::instruction::Nmos6502;
+use crate::bus::{MachineBus, VEC_RESET};
+use crate::cpu::Cpu;
+use crate::lcd::LcdHardware;
 
-use crate::bus::{MachineBus, VEC_IRQ, VEC_RESET};
-
-/// Result of executing one emulated instruction.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct StepResult {
-    /// Program counter before the instruction.
-    pub old_pc: u16,
-    /// Program counter after the instruction.
-    pub new_pc: u16,
-    /// Cycles used by the instruction.
-    pub cycles: u64,
-    /// Whether the CPU core executed an instruction.
-    pub executed: bool,
+/// The 6502, its memory and its devices.
+pub struct Machine<H> {
+    /// CPU registers and flags.
+    pub cpu: Cpu,
+    /// Memory and devices.
+    pub bus: MachineBus<H>,
 }
 
-/// The complete emulated computer.
-pub struct Machine {
-    /// The underlying NMOS 6502 core and memory bus.
-    pub cpu: CPU<MachineBus, Nmos6502>,
-}
-
-impl Default for Machine {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Machine {
-    /// Creates a new machine with zero-filled RAM.
-    #[must_use]
-    pub fn new() -> Self {
+impl<H: LcdHardware> Machine<H> {
+    /// Creates a machine with zeroed RAM and the given display.  Call
+    /// [`init`](Self::init) before use.
+    pub const fn new(display: H) -> Self {
         Self {
-            cpu: CPU::new(MachineBus::new(), Nmos6502),
+            cpu: Cpu::new(),
+            bus: MachineBus::new(display),
         }
     }
 
-    /// Resets the CPU from its reset vector.
+    /// Zeroes RAM and looks for the display, as at power-up.
+    pub fn init(&mut self) {
+        self.bus.reset_memory();
+        self.bus.lcd_mut().init();
+    }
+
+    /// Resets the CPU from the reset vector.
     pub fn reset(&mut self) {
-        self.cpu.reset();
+        self.cpu.reset(&mut self.bus);
     }
 
-    /// Makes `address` the reset target and resets the CPU.
-    pub fn reset_at(&mut self, address: u16) {
+    /// Executes one instruction and returns the cycles it took.
+    pub fn step(&mut self) -> u32 {
+        self.cpu.step(&mut self.bus)
+    }
+
+    /// Reads a little-endian word, such as a vector, without side effects.
+    #[must_use]
+    pub fn word(&self, address: u16) -> u16 {
+        u16::from_le_bytes([
+            self.bus.peek(address),
+            self.bus.peek(address.wrapping_add(1)),
+        ])
+    }
+
+    /// Stores `address` in the reset vector.
+    pub fn set_reset_vector(&mut self, address: u16) {
         let [lo, hi] = address.to_le_bytes();
-        self.cpu.memory.poke(VEC_RESET, lo);
-        self.cpu.memory.poke(VEC_RESET.wrapping_add(1), hi);
-        self.reset();
-    }
-
-    /// Executes one instruction or one waiting-state cycle.
-    #[must_use]
-    pub fn step(&mut self) -> StepResult {
-        let old_pc = self.cpu.registers.program_counter;
-        let old_cycles = self.cpu.cycles;
-        let executed = self.cpu.single_step();
-        StepResult {
-            old_pc,
-            new_pc: self.cpu.registers.program_counter,
-            cycles: self.cpu.cycles.wrapping_sub(old_cycles),
-            executed,
-        }
-    }
-
-    /// Returns `true` when the next instruction is an unhandled `BRK`.
-    #[must_use]
-    pub fn has_unhandled_brk(&self) -> bool {
-        let pc = self.cpu.registers.program_counter;
-        self.cpu.memory.peek(pc) == 0
-            && u16::from_le_bytes([
-                self.cpu.memory.peek(VEC_IRQ),
-                self.cpu.memory.peek(VEC_IRQ.wrapping_add(1)),
-            ]) == 0
-    }
-
-    /// Returns whether the emulated CPU is halted until reset.
-    #[must_use]
-    pub const fn is_stopped(&self) -> bool {
-        matches!(self.cpu.wait_state(), WaitState::WaitingForReset)
+        let ram = self.bus.ram_mut();
+        ram[usize::from(VEC_RESET)] = lo;
+        ram[usize::from(VEC_RESET) + 1] = hi;
     }
 }

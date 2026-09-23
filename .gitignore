@@ -1,6 +1,10 @@
 /target/
 /asm/*.bin
 /asm/*.lst
+/host/fake6502-upstream/
+/host/cputest.log
+__pycache__/
 *.uf2
 .DS_Store
-
+# Used only to import the project into an IDE.
+/pico_sdk_import.cmake
